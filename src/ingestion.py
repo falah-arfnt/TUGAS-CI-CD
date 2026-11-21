@@ -1,11 +1,16 @@
 
 import csv
+import os
 from pathlib import Path
 from datetime import datetime
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 DATA_DIR = BASE_DIR / "data"
 OUTPUT_DIR = BASE_DIR / "processed"
+
+# Azure Blob Storage configuration
+AZURE_CONTAINER_NAME = "sales-data"
+AZURE_BLOB_NAME = "sales_data_combined.csv"
 
 # Kolom yang harus tersedia dalam dataset
 REQUIRED_COLUMNS = [
@@ -57,7 +62,40 @@ def validate_file(file_path):
         return rows
 
 
-def run_ingestion():
+def upload_to_azure(file_path, blob_name):
+    """Mengunggah file hasil ingestion ke Azure Blob Storage."""
+
+    connection_string = os.getenv("AZURE_STORAGE_CONNECTION_STRING")
+
+    if not connection_string:
+        raise ValueError(
+            "Environment variable AZURE_STORAGE_CONNECTION_STRING "
+            "belum tersedia."
+        )
+
+    # Import dilakukan di dalam fungsi agar unit testing validasi
+    # tetap dapat berjalan tanpa koneksi Azure.
+    from azure.storage.blob import BlobServiceClient
+
+    blob_service_client = BlobServiceClient.from_connection_string(
+        connection_string
+    )
+
+    blob_client = blob_service_client.get_blob_client(
+        container=AZURE_CONTAINER_NAME,
+        blob=blob_name
+    )
+
+    with open(file_path, "rb") as file:
+        blob_client.upload_blob(file, overwrite=True)
+
+    print("\n=== AZURE UPLOAD ===")
+    print(f"Container       : {AZURE_CONTAINER_NAME}")
+    print(f"Blob name       : {blob_name}")
+    print("Upload status   : SUCCESS")
+
+
+def run_ingestion(upload_to_cloud=False):
     """Membaca, memvalidasi, dan menggabungkan seluruh dataset."""
 
     files = sorted(DATA_DIR.glob("sales_data_*.csv"))
@@ -98,8 +136,15 @@ def run_ingestion():
     print(f"Output file       : {output_file}")
     print(f"Execution time    : {datetime.now()}")
 
+    # Upload hasil ingestion ke Azure jika diaktifkan
+    if upload_to_cloud:
+        upload_to_azure(
+            file_path=output_file,
+            blob_name=AZURE_BLOB_NAME
+        )
+
     print("\nIngestion completed successfully!")
 
 
 if __name__ == "__main__":
-    run_ingestion()
+    run_ingestion(upload_to_cloud=True)
